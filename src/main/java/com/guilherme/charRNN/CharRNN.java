@@ -68,9 +68,9 @@ public class CharRNN {
         }
 
         // Model parameters
-        INDArray Wxh = Nd4j.rand(hiddenSize, vocabSize);
-        INDArray Whh = Nd4j.rand(hiddenSize, hiddenSize);
-        INDArray Why = Nd4j.rand(vocabSize, hiddenSize);
+        INDArray Wxh = Nd4j.rand(hiddenSize, vocabSize).mul(0.01);
+        INDArray Whh = Nd4j.rand(hiddenSize, hiddenSize).mul(0.01);
+        INDArray Why = Nd4j.rand(vocabSize, hiddenSize).mul(0.01);
         INDArray bh = Nd4j.zeros(hiddenSize, 1);
         INDArray by = Nd4j.zeros(vocabSize, 1);
 
@@ -197,6 +197,7 @@ public class CharRNN {
             INDArray cumExp = exp.cumsum(0);
             ps.put(t, exp.div(cumExp));
 
+            System.out.println(ps.get(t).toString());
             // Calculate the cross-entropy loss
             INDArray psState = ps.get(t);
             loss += - Math.log(psState.getDouble(targets[t], 0));
@@ -316,6 +317,8 @@ public class CharRNN {
 
             int idx = randChoice(to_select, p);
 
+            System.out.println("Sampled idx: " + idx);
+
             oneHotArray = new float[vocabSize];
             for (int j = 0; j < oneHotArray.length; j++) {
                 if ( j == idx ) {
@@ -339,6 +342,8 @@ public class CharRNN {
     private static int randChoice(int[] idxs, INDArray probabilities) {
         double p = Math.random();
         double cumulativeProbability = 0.0;
+//        System.out.println("Probabilities");
+//        System.out.println(probabilities.toString());
         int idx = 0;
         for (; idx < idxs.length; idx++) {
             cumulativeProbability += probabilities.getDouble(idx);
