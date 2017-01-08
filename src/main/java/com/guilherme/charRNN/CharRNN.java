@@ -27,9 +27,25 @@ public class CharRNN {
     }
 
     // Hyperparameters
-    private int hiddenSize = 100;
-    private int seqLength = 25;
-    private double learningRate = 0.1;
+    private int hiddenSize;
+    private int seqLength;
+    private double learningRate;
+    private int vocabSize;
+
+
+    // RNN weights
+    INDArray Wxh;
+    INDArray Whh;
+    INDArray Why;
+    INDArray bh;
+    INDArray by;
+
+    // Adagrad memory
+    INDArray mWxh;
+    INDArray mWhh;
+    INDArray mWhy;
+    INDArray mbh;
+    INDArray mby;
 
 
     private String readFile(String fileLocation) throws IOException {
@@ -53,7 +69,11 @@ public class CharRNN {
 
         // Sizes
         int dataSize = data.length();
-        int vocabSize = chars.size();
+        this.vocabSize = chars.size();
+
+        this.hiddenSize = 100;
+        this.seqLength = 5;
+        this.learningRate = 0.1;
 
         System.out.println("Size of data: " + dataSize);
         System.out.println("Size of vocabulary: " + vocabSize);
@@ -68,21 +88,21 @@ public class CharRNN {
         }
 
         // Model parameters
-        INDArray Wxh = Nd4j.rand(hiddenSize, vocabSize).mul(0.01);
-        INDArray Whh = Nd4j.rand(hiddenSize, hiddenSize).mul(0.01);
-        INDArray Why = Nd4j.rand(vocabSize, hiddenSize).mul(0.01);
-        INDArray bh = Nd4j.zeros(hiddenSize, 1);
-        INDArray by = Nd4j.zeros(vocabSize, 1);
+        this.Wxh = Nd4j.rand(hiddenSize, vocabSize).mul(0.1);
+        this.Whh = Nd4j.rand(hiddenSize, hiddenSize).mul(0.1);
+        this.Why = Nd4j.rand(vocabSize, hiddenSize).mul(0.1);
+        this.bh = Nd4j.zeros(hiddenSize, 1);
+        this.by = Nd4j.zeros(vocabSize, 1);
 
         int n = 0;
         int p = 0;
 
         // Adagrad memory
-        INDArray mWxh = Nd4j.zeros(hiddenSize, vocabSize);
-        INDArray mWhh = Nd4j.zeros(hiddenSize, hiddenSize);
-        INDArray mWhy = Nd4j.zeros(vocabSize, hiddenSize);
-        INDArray mbh = Nd4j.zeros(hiddenSize, 1);
-        INDArray mby = Nd4j.zeros(vocabSize, 1);
+        this.mWxh = Nd4j.zeros(hiddenSize, vocabSize);
+        this.mWhh = Nd4j.zeros(hiddenSize, hiddenSize);
+        this.mWhy = Nd4j.zeros(vocabSize, hiddenSize);
+        this.mbh = Nd4j.zeros(hiddenSize, 1);
+        this.mby = Nd4j.zeros(vocabSize, 1);
 
         // Loss at iteration 0
         double smoothLoss = - Math.log(1.0/vocabSize) * seqLength;
@@ -109,21 +129,24 @@ public class CharRNN {
 
             // Sample from the model every 100 iterations
             if (n % 100 == 0) {
-                int[] sampleIx = sample(hprev, inputs[0], n, Wxh, Whh, Why, bh, by, vocabSize);
+                int[] sampleIx = sample(hprev, inputs[0], 200);
                 char[] generatedText = new char[sampleIx.length];
 
-                int i = 0;
-                for(int ix: sampleIx) {
-                    generatedText[i] = IxToChar.get(ix);
-                    i++;
-                }
+//                int i = 0;
+//                for(int ix: sampleIx) {
+//                    generatedText[i] = IxToChar.get(ix);
+//                    i++;
+//                }
 
-                System.out.println("Generated text: ");
-                System.out.println(new String(generatedText));
+                // System.out.println("Generated text: ");
+                // System.out.println(new String(generatedText));
             }
 
             // forward seq_length characters through the net and fetch gradient
-            Container propagation = lossFun(inputs, targets, hprev, Wxh, Whh, Why, bh, by, vocabSize, hiddenSize);
+            Container propagation = lossFun(inputs, targets, hprev);
+
+            // Update hidden state
+            hprev = propagation.hs;
 
             // Update loss after forward and backprop
             smoothLoss = smoothLoss * 0.999 + propagation.loss * 0.001;
@@ -155,8 +178,7 @@ public class CharRNN {
     }
 
 
-    private static Container lossFun(int[] inputs, int[] targets, INDArray hprev, INDArray Wxh, INDArray Whh,
-                               INDArray Why, INDArray bh, INDArray by, int vocabSize, int hiddenSize) {
+    private Container lossFun(int[] inputs, int[] targets, INDArray hprev) {
 
         HashMap<Integer, INDArray> xs =  new HashMap<Integer, INDArray>();
         HashMap<Integer, INDArray> hs =  new HashMap<Integer, INDArray>();
@@ -190,14 +212,14 @@ public class CharRNN {
 
             // Output - Y
             // Dot product between weights from h to y and hidden state, plus bias
+            // unnormalized log probabilities for next chars
             ys.put(t, Why.mmul(hs.get(t)).add(by));
 
-            // Probabilities - P
+            // normalised Probabilities - P
             INDArray exp = Transforms.exp(ys.get(t));
-            INDArray cumExp = exp.cumsum(0);
+            INDArray cumExp = Nd4j.sum(exp);
             ps.put(t, exp.div(cumExp));
 
-            System.out.println(ps.get(t).toString());
             // Calculate the cross-entropy loss
             INDArray psState = ps.get(t);
             loss += - Math.log(psState.getDouble(targets[t], 0));
@@ -221,22 +243,21 @@ public class CharRNN {
             dy.putScalar(new int[]{idx, 0}, newValue);
 
             // Y to H
-            INDArray dot1 = dy.mmul(hs.get(t).transpose());
-            dWhy.add(dot1);
-            dby.add(dy);
+            INDArray dot1 = hs.get(t).transpose().mmul(dy);
+            dWhy.addi(dot1);
+            dby.addi(dy);
 
             //Backprop into h
             dot1 = Why.transpose().mmul(dy);
             INDArray dh = dot1.add(dhnext);
             INDArray squaredH = hs.get(t).muli(hs.get(t));
-            INDArray ones = Nd4j.ones(squaredH.shape());
-            INDArray dhraw = dh.muli(ones.sub(squaredH));
+            INDArray dhraw = squaredH.addi(-1).muli(dh);
 
             dbh.add(dhraw);
 
             // Update gradients
-            dWxh.add(dhraw.mmul(xs.get(t).transpose()));
-            dWhh.add(dhraw.mmul(hs.get(t-1).transpose()));
+            dWxh.addi(xs.get(t).transpose().mmul(dhraw));
+            dWhh.addi(hs.get(t-1).transpose().mmul(dhraw));
 
             dhnext = Whh.transpose().mmul(dhraw);
         }
@@ -280,8 +301,7 @@ public class CharRNN {
      * @param n
      * @return
      */
-    private static int[] sample(INDArray h, int seedIdx, int n, INDArray Wxh, INDArray Whh,
-                               INDArray Why, INDArray bh, INDArray by, int vocabSize) {
+    private int[] sample(INDArray h, int seedIdx, int n) {
         float[] oneHotArray = new float[vocabSize];
         for (int j = 0; j < oneHotArray.length; j++) {
             if ( j == seedIdx ) {
@@ -289,7 +309,6 @@ public class CharRNN {
             }
         }
         INDArray x =  Nd4j.create(oneHotArray).transpose();
-        System.out.println(x.toString());
         int[] ixes = new int[n];
 
         for (int t = 0; t < n; t++) {
@@ -306,7 +325,7 @@ public class CharRNN {
 
             // Probabilities - P
             INDArray exp = Transforms.exp(y);
-            INDArray cumExp = exp.cumsum(0);
+            INDArray cumExp = Nd4j.sum(exp);
             INDArray p = exp.div(cumExp);
 
             // Random choice
@@ -317,7 +336,7 @@ public class CharRNN {
 
             int idx = randChoice(to_select, p);
 
-            System.out.println("Sampled idx: " + idx);
+            // System.out.println("Sampled idx: " + idx);
 
             oneHotArray = new float[vocabSize];
             for (int j = 0; j < oneHotArray.length; j++) {
@@ -342,8 +361,6 @@ public class CharRNN {
     private static int randChoice(int[] idxs, INDArray probabilities) {
         double p = Math.random();
         double cumulativeProbability = 0.0;
-//        System.out.println("Probabilities");
-//        System.out.println(probabilities.toString());
         int idx = 0;
         for (; idx < idxs.length; idx++) {
             cumulativeProbability += probabilities.getDouble(idx);
