@@ -72,8 +72,8 @@ public class CharRNN {
         this.vocabSize = chars.size();
 
         this.hiddenSize = 100;
-        this.seqLength = 5;
-        this.learningRate = 0.1;
+        this.seqLength = 25;
+        this.learningRate = -0.01;
 
         System.out.println("Size of data: " + dataSize);
         System.out.println("Size of vocabulary: " + vocabSize);
@@ -88,9 +88,9 @@ public class CharRNN {
         }
 
         // Model parameters
-        this.Wxh = Nd4j.rand(hiddenSize, vocabSize).mul(0.1);
-        this.Whh = Nd4j.rand(hiddenSize, hiddenSize).mul(0.1);
-        this.Why = Nd4j.rand(vocabSize, hiddenSize).mul(0.1);
+        this.Wxh = Nd4j.rand(hiddenSize, vocabSize).mul(0.01);
+        this.Whh = Nd4j.rand(hiddenSize, hiddenSize).mul(0.01);
+        this.Why = Nd4j.rand(vocabSize, hiddenSize).mul(0.01);
         this.bh = Nd4j.zeros(hiddenSize, 1);
         this.by = Nd4j.zeros(vocabSize, 1);
 
@@ -156,18 +156,27 @@ public class CharRNN {
             }
 
             // parameter update with Adagrad
-            mWxh = mWxh.add(Wxh.muli(Wxh));
-            mWhh = mWhh.add(Whh.muli(Whh));
-            mWhy = mWhy.add(Why.muli(Why));
-            mbh = mbh.add(bh.muli(bh));
-            mby = mby.add(by.muli(by));
+            mWxh = mWxh.add(propagation.dWxh.muli(propagation.dWxh));
+            mWhh = mWhh.add(propagation.dWhh.muli(propagation.dWhh));
+            mWhy = mWhy.add(propagation.dWhy.muli(propagation.dWhy));
+            mbh = mbh.add(propagation.dbh.muli(propagation.dbh));
+            mby = mby.add(propagation.dby.muli(propagation.dby));
 
             // Adagrad update
-            Wxh = propagation.dWxh.mul(- learningRate).div(Transforms.sqrt(mWxh.add(0.00000001)));
-            Whh = propagation.dWhh.mul(- learningRate).div(Transforms.sqrt(mWhh.add(0.00000001)));
-            Why = propagation.dWhy.mul(- learningRate).div(Transforms.sqrt(mWhy.add(0.00000001)));
-            bh = propagation.dbh.mul(- learningRate).div(Transforms.sqrt(mbh.add(0.00000001)));
-            by = propagation.dby.mul(- learningRate).div(Transforms.sqrt(mby.add(0.00000001)));
+            INDArray tmp = propagation.dWxh.mul(learningRate).div(Transforms.sqrt(mWxh.add(0.00000001)));
+            Wxh = Wxh.add(tmp);
+
+            tmp = propagation.dWhh.mul(learningRate).div(Transforms.sqrt(mWhh.add(0.00000001)));
+            Whh = Whh.add(tmp);
+
+            tmp = propagation.dWhy.mul(learningRate).div(Transforms.sqrt(mWhy.add(0.00000001)));
+            Why = Why.add(tmp);
+
+            tmp = propagation.dbh.mul(learningRate).div(Transforms.sqrt(mbh.add(0.00000001)));
+            bh = bh.add(tmp);
+
+            tmp = propagation.dby.mul(learningRate).div(Transforms.sqrt(mby.add(0.00000001)));
+            by = by.add(tmp);
 
             // move data pointer
             p += seqLength;
@@ -207,8 +216,8 @@ public class CharRNN {
             // Hidden layer to hidden
             INDArray dot2 = Whh.mmul(hs.get(t - 1)).add(bh);
             INDArray tmp = dot1.add(dot2);
-            // Hidden state step, squash between -1 and 1 with hyperbolic tan
-            hs.put(t, Transforms.tanh(tmp));
+            // Hidden state step, squash using ReLu
+            hs.put(t, Transforms.relu(tmp));
 
             // Output - Y
             // Dot product between weights from h to y and hidden state, plus bias
@@ -251,7 +260,16 @@ public class CharRNN {
             dot1 = Why.transpose().mmul(dy);
             INDArray dh = dot1.add(dhnext);
             INDArray squaredH = hs.get(t).muli(hs.get(t));
-            INDArray dhraw = squaredH.addi(-1).muli(dh);
+            // 1 - SquareH
+            NdIndexIterator iter = new NdIndexIterator(squaredH.shape());
+            while (iter.hasNext()) {
+                int[] nextIndex = iter.next();
+                double nextVal = squaredH.getDouble(nextIndex);
+                double newVal = 1 - nextVal;
+                squaredH.putScalar(nextIndex, newVal);
+            }
+
+            INDArray dhraw = squaredH.muli(dh);
 
             dbh.add(dhraw);
 
@@ -316,8 +334,8 @@ public class CharRNN {
             // Hidden layer to hidden
             INDArray dot2 = Whh.mmul(h).add(bh);
             INDArray tmp = dot1.add(dot2);
-            // Hidden state step, squash between -1 and 1 with hyperbolic tan
-            h = Transforms.tanh(tmp);
+            // Hidden state step, squash with rectified linear unit (can use tanh as well)
+            h = Transforms.relu(tmp);
 
             // Output - Y
             // Dot product between weights from h to y and hidden state, plus bias
