@@ -7,6 +7,9 @@ import org.nd4j.linalg.api.ndarray.INDArray;
  */
 public class Container {
 
+    // Store the loss calculated after the forward pass
+    // Gradients calculated after the backward pass
+    // Hidden state
     public double loss;
     public INDArray dWxh;
     public INDArray dWhh;

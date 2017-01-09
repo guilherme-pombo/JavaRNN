@@ -26,26 +26,47 @@ public class CharRNN {
         }
     }
 
-    // Hyperparameters
+    // -- Hyperparameters of RNN --
+    // Number of nodes in the hidden layer
     private int hiddenSize;
+    // Number of characters to take in at a time
     private int seqLength;
+    // Learning rate, not really important since we are using Adagrad which has a dynamic learning rate
+    // Will just set to 0.01
     private double learningRate;
+    // Number of unique characters in the training data
     private int vocabSize;
 
 
     // RNN weights
+    // Weights from input layer to hidden layer
     private INDArray Wxh;
+    // Weights from hidden layer nodes to hidden layer nodes
     private INDArray Whh;
+    // Weights from hidden layer to output layer
     private INDArray Why;
+    // Hidden layer bias
     private INDArray bh;
+    // Output layer bias
     private INDArray by;
 
 
+    /**
+     * Read a file into a string
+     * @param fileLocation
+     * @return
+     * @throws IOException
+     */
     private String readFile(String fileLocation) throws IOException {
         File file = new File(fileLocation);
         return Files.toString(file, Charsets.UTF_8);
     }
 
+    /**
+     * Get an ArrayList with the unique characters that occur in a string
+     * @param arg
+     * @return
+     */
     private ArrayList<Character> getUniqueChars( String arg ) {
         ArrayList<Character> unique = new ArrayList<Character>();
         for( int i = 0; i < arg.length(); i++)
@@ -55,15 +76,27 @@ public class CharRNN {
     }
 
 
+    /**
+     * This is the constructor for the RNN
+     * It keeps on training the RNN infinitely, sampling random text from the RNN model every 100 iterations
+     * The loss should keeps going down, until supposedly reaching 0
+     * This is obviously not the best way to train a RNN
+     * Only for illustration purposes that the text sampled from the RNN gets more and more congruent and similar
+     * to the original training data as the epochs go on
+     * @throws IOException
+     */
     private CharRNN() throws IOException {
         // Read in file
         String data = readFile("input.txt");
+        // Get unique chars in the text file
         ArrayList<Character> chars = getUniqueChars(data);
 
-        // Sizes
+        // Number of characters in the text
         int dataSize = data.length();
+        // Number of unique characters in the text
         this.vocabSize = chars.size();
 
+        // Define the RNN hyperparameters
         this.hiddenSize = 100;
         this.seqLength = 25;
         this.learningRate = 0.01;
@@ -71,8 +104,9 @@ public class CharRNN {
         System.out.println("Size of data: " + dataSize);
         System.out.println("Size of vocabulary: " + vocabSize);
 
-        // Maps
+        // Character to integer map
         HashMap<Character, Integer> CharToIx = new HashMap<Character, Integer>();
+        // Integer to character map
         HashMap<Integer, Character> IxToChar = new HashMap<Integer, Character>();
 
         for (int i = 0; i < chars.size(); i++) {
@@ -80,17 +114,21 @@ public class CharRNN {
             IxToChar.put(i, chars.get(i));
         }
 
-        // Model parameters
+        // Create the weights of the RNN to have small random values
         this.Wxh = Nd4j.randn(hiddenSize, vocabSize).mul(0.01);
         this.Whh = Nd4j.randn(hiddenSize, hiddenSize).mul(0.01);
         this.Why = Nd4j.randn(vocabSize, hiddenSize).mul(0.01);
         this.bh = Nd4j.zeros(hiddenSize, 1);
         this.by = Nd4j.zeros(vocabSize, 1);
 
+        // This stores the number of iterations performed
         int n = 0;
+        // This a pointer to where in the text we are
         int p = 0;
 
-        // Adagrad memory
+        // Adagrad memory -- they each are
+        // a diagonal matrix where each diagonal element is the sum of the squares of the gradients
+        // They serve as the adaptive learning rate
         INDArray mWxh = Nd4j.zeros(hiddenSize, vocabSize);
         INDArray mWhh = Nd4j.zeros(hiddenSize, hiddenSize);
         INDArray mWhy = Nd4j.zeros(vocabSize, hiddenSize);
@@ -99,30 +137,36 @@ public class CharRNN {
 
         // Loss at iteration 0
         double smoothLoss = - Math.log(1.0/vocabSize) * seqLength;
+        // Initial value of RNN memory
         INDArray hprev = Nd4j.zeros(hiddenSize, 1);
 
+        // Keep iterating forever and sampling next text every 100 iterations
         while (true) {
             // prepare inputs (we're sweeping from left to right in steps seq_length long)
             if (p + seqLength+1 >= data.length() || n == 0) {
                 // Reset the RNN memory
                 hprev = Nd4j.zeros(hiddenSize, 1);
-                // Start from the beggining of the data
+                // Start from the first character in the training text
                 p = 0;
             }
 
+            // This will store the index of the input characters
             int[] inputs = new int[seqLength];
+            // This will store the next character in a sequence
+            // If the text is "Hello" and input is "H", the target is "e"
             int[] targets = new int[seqLength];
 
-            // Create inputs and trage array
+            // Create inputs and target array
             for (int i = p; i < p + seqLength; i++) {
                 inputs[i - p] = CharToIx.get(data.charAt(i));
                 targets[i - p] = CharToIx.get(data.charAt(i+1));
             }
 
 
-            // Sample from the model every 100 iterations
+            // Sample new text from the model every 100 iterations
             if (n % 100 == 0) {
-                int[] sampleIx = sample(hprev, inputs[0], 200);
+                // Get the ids of the characters
+                int[] sampleIx = sample(hprev, inputs[0], 100);
                 char[] generatedText = new char[sampleIx.length];
 
                 int i = 0;
@@ -135,7 +179,9 @@ public class CharRNN {
                 System.out.println(new String(generatedText));
             }
 
-            // forward seq_length characters through the net and fetch gradient
+            // Execute forward and backwards pass on the RNN and get
+            // the loss at this stage, as well as the gradients for all the parameters
+            // and the new hidden state
             Container res = lossFun(inputs, targets, hprev);
 
             // Update hidden state
@@ -149,6 +195,7 @@ public class CharRNN {
             }
 
             // parameter update with Adagrad
+            // Again, the Adagrad memory stores the square of the gradient for each parameter
             mWxh.addi(res.dWxh.mul(res.dWxh));
             mWhh.addi(res.dWhh.mul(res.dWhh));
             mWhy.addi(res.dWhy.mul(res.dWhy));
@@ -156,29 +203,24 @@ public class CharRNN {
             mby.addi(res.dby.mul(res.dby));
 
 
-            // Adagrad update - add 1e-8 to the squared gradients to avoid divsion by zero
-            // Theta = Theta - learningRate*gradients/sqrt(squared_gradients + 1e-8)
+            // Adagrad update -
+            // add smoothing parameter, 0.0000001, to the squared gradients to avoid division by zero
+            // Weights = old_weights - learningRate*gradients/sqrt(squared_gradients + 1e-7)
 
-            INDArray tmp = (res.dWxh.mul(learningRate))
-                    .div(Transforms.sqrt(mWxh.add(0.001)));
+            Wxh.subi((res.dWxh.mul(learningRate))
+                    .div(Transforms.sqrt(mWxh.add(0.0000001))));
 
-            Wxh.subi(tmp);
+            Whh.subi((res.dWhh.mul(learningRate))
+                    .div(Transforms.sqrt(mWhh.add(0.0000001))));
 
-            tmp = (res.dWhh.mul(learningRate))
-                    .div(Transforms.sqrt(mWhh.add(0.01)));
-            Whh.subi(tmp);
+            Why.subi((res.dWhy.mul(learningRate))
+                    .div(Transforms.sqrt(mWhy.add(0.0000001))));
 
-            tmp = (res.dWhy.mul(learningRate))
-                    .div(Transforms.sqrt(mWhy.add(0.01)));
-            Why.subi(tmp);
+            bh.subi((res.dbh.mul(learningRate))
+                    .div(Transforms.sqrt(mbh.add(0.0000001))));
 
-            tmp = (res.dbh.mul(learningRate))
-                    .div(Transforms.sqrt(mbh.add(0.01)));
-            bh.subi(tmp);
-
-            tmp = (res.dby.mul(learningRate))
-                    .div(Transforms.sqrt(mby.add(0.01)));
-            by.subi(tmp);
+            by.subi((res.dby.mul(learningRate))
+                    .div(Transforms.sqrt(mby.add(0.0000001))));
 
             // move data pointer
             p += seqLength;
@@ -189,12 +231,25 @@ public class CharRNN {
     }
 
 
-
+    /**
+     * Given inputs and targets, this performs the forward and backward pass for the RNN
+     * Returns the loss after the forward pass
+     * The gradients for each parameter of the model, calculated post backward pass
+     * The current hidden state
+     * @param inputs
+     * @param targets
+     * @param hprev
+     * @return
+     */
     private Container lossFun(int[] inputs, int[] targets, INDArray hprev) {
 
+        // Stores inputs
         HashMap<Integer, INDArray> xs =  new HashMap<Integer, INDArray>();
+        // Stores hidden states
         HashMap<Integer, INDArray> hs =  new HashMap<Integer, INDArray>();
+        // Stores outputs of RNN
         HashMap<Integer, INDArray> ys =  new HashMap<Integer, INDArray>();
+        // Stores normalised outputs -- probabilities of each character
         HashMap<Integer, INDArray> ps =  new HashMap<Integer, INDArray>();
 
         // Put in the previous state
@@ -203,42 +258,35 @@ public class CharRNN {
 
         // Forward pass
         for(int t = 0; t < inputs.length; t++) {
-            // Input - X
-            // Generate oneHot representation
+            // Store one-hot encoding of the inputs
             int idx = inputs[t];
-            float[] oneHotArray = new float[vocabSize];
-            for (int j = 0; j < oneHotArray.length; j++) {
-                if ( j == idx ) {
-                    oneHotArray[j] = 1;
-                }
-            }
-            xs.put(t, Nd4j.create(oneHotArray).transpose());
-            // Hidden - H
+            xs.put(t, oneHotEncoding(idx));
+
+            // Hidden layer state
             // Input layer to hidden
             INDArray dot1 = Wxh.mmul(xs.get(t));
-            // Hidden layer to hidden
+            // Hidden layer to hidden -- add bias
             INDArray dot2 = Whh.mmul(hs.get(t - 1)).add(bh);
-            INDArray tmp = dot1.add(dot2);
             // Hidden state step, squash using tanh to -1 to 1
-            hs.put(t, Transforms.tanh(tmp));
+            hs.put(t, Transforms.tanh(dot1.add(dot2)));
 
-            // Output - Y
-            // Dot product between weights from h to y and hidden state, plus bias
-            // unnormalized log probabilities for next chars
+            // Outputs
+            // Hidden state (dot product) with weights from hidden to output (add bias as well)
             ys.put(t, Why.mmul(hs.get(t)).add(by));
 
             // normalised Probabilities - P
             INDArray exp = Transforms.exp(ys.get(t));
+            // Normalisation factor
             INDArray cumExp = Nd4j.sum(exp);
             ps.put(t, exp.div(cumExp));
 
+            // Given the target and the probabilities of the each character
             // Calculate the cross-entropy loss
-            INDArray psState = ps.get(t);
-            loss += - Math.log(psState.getDouble(targets[t], 0));
+            loss += - Math.log(ps.get(t).getDouble(targets[t], 0));
         }
 
         // Backward pass
-        // Gradients
+        // Gradients for each parameter
         INDArray dWxh = Nd4j.zeros(hiddenSize, vocabSize);
         INDArray dWhh = Nd4j.zeros(hiddenSize, hiddenSize);
         INDArray dWhy = Nd4j.zeros(vocabSize, hiddenSize);
@@ -246,21 +294,27 @@ public class CharRNN {
         INDArray dby = Nd4j.zeros(vocabSize, 1);
         INDArray dhnext = Nd4j.zeros(hs.get(0).shape()[0], 1);
 
-        // backward pass: compute gradients going backwards
+        // backward pass: compute gradients starting with the probabilities and going back
+        // to output layer, then hidden, then input layer
         for (int t = inputs.length - 1; t >= 0; t--) {
-            // P to y
+
+            // Probabilities to output layer
             INDArray dy = ps.get(t);
             int idx = targets[t];
             double newValue = dy.getDouble(idx) - 1;
             dy.putScalar(new int[]{idx, 0}, newValue);
-            // Y to H
+
             INDArray dot1 = dy.mmul(hs.get(t).transpose());
+            // Gradient for hidden to output
             dWhy.addi(dot1);
+            // Output Bias gradient
             dby.addi(dy);
 
-            //Backprop into h
+            // Backprop into the hidden layer
             dot1 = Why.transpose().mmul(dy);
+            // Gradient for hidden layer bias
             INDArray dh = dot1.add(dhnext);
+
             INDArray squaredH = Transforms.pow(hs.get(t),2);
             // 1 - SquareH
             NdIndexIterator iter = new NdIndexIterator(squaredH.shape());
@@ -275,14 +329,17 @@ public class CharRNN {
 
             dbh.addi(dhraw);
 
-            // Update gradients
-            dWxh.addi(dhraw.mmul(xs.get(t).transpose()));
+            // Hidden to hidden weight gradients
             dWhh.addi(dhraw.mmul(hs.get(t-1).transpose()));
+
+            // Output to hidden weight gradients
+            dWxh.addi(dhraw.mmul(xs.get(t).transpose()));
 
             dhnext = Whh.transpose().mmul(dhraw);
         }
 
         // Clip to avoid exploding gradients
+        // Don't have to worry about underflowing gradients with RNN and tanh activation
         dWxh = clipMatrix(dWxh);
         dWhy = clipMatrix(dWhy);
         dbh = clipMatrix(dbh);
@@ -290,6 +347,7 @@ public class CharRNN {
 
         return new Container(loss, dWxh, dWhh, dWhy, dbh, dby, hs.get(inputs.length - 1));
     }
+
 
     /**
      * Clip the values within a matrix to -5 to 5 range, to avoid exploding gradients
@@ -314,6 +372,25 @@ public class CharRNN {
 
 
     /**
+     * Generate a one hot encoding for an input
+     * A one hot encoding is a matrix where all elements are 0, except for one entry which is 1
+     * So say we want to to encode letter "c" which is the 4th element in our vocabulary of 5 elements we write
+     * [0,0,0,1,0]
+     * @param idx
+     * @return
+     */
+    private INDArray oneHotEncoding(int idx) {
+        float[] oneHotArray = new float[vocabSize];
+        for (int j = 0; j < oneHotArray.length; j++) {
+            if ( j == idx ) {
+                oneHotArray[j] = 1;
+            }
+        }
+        return Nd4j.create(oneHotArray).transpose();
+    }
+
+
+    /**
      * sample a sequence of integers from the model
      * h is memory state, seed_ix is seed letter for first time step
      * @param h
@@ -322,49 +399,40 @@ public class CharRNN {
      * @return
      */
     private int[] sample(INDArray h, int seedIdx, int n) {
-        float[] oneHotArray = new float[vocabSize];
-        for (int j = 0; j < oneHotArray.length; j++) {
-            if ( j == seedIdx ) {
-                oneHotArray[j] = 1;
-            }
-        }
-        INDArray x =  Nd4j.create(oneHotArray).transpose();
+
+        // Use a seed character to start the sampling from
+        INDArray x =  oneHotEncoding(seedIdx);
         int[] ixes = new int[n];
 
+        // Do forward pass
         for (int t = 0; t < n; t++) {
+            // Input to hidden
             INDArray dot1 = Wxh.mmul(x);
             // Hidden layer to hidden
             INDArray dot2 = Whh.mmul(h).add(bh);
-            INDArray tmp = dot1.add(dot2);
             // Hidden state step, squash with tanh to -1 to 1
-            h = Transforms.tanh(tmp);
+            h = Transforms.tanh(dot1.add(dot2));
 
             // Output - Y
             // Dot product between weights from h to y and hidden state, plus bias
             INDArray y = Why.mmul(h).add(by);
 
-            // Probabilities - P
+            // Normalised Probabilities - P
             INDArray exp = Transforms.exp(y);
             INDArray cumExp = Nd4j.sum(exp);
             INDArray p = exp.div(cumExp);
 
-            // Random choice
             int[] to_select = new int[vocabSize];
             for (int i = 0; i < vocabSize; i++){
                 to_select[i] = i;
             }
 
+            // Given the probabilities of the characters, pick "random characters" to generate the text
             int idx = randChoice(to_select, p);
 
-            // System.out.println("Sampled idx: " + idx);
-
-            oneHotArray = new float[vocabSize];
-            for (int j = 0; j < oneHotArray.length; j++) {
-                if ( j == idx ) {
-                    oneHotArray[j] = 1;
-                }
-            }
-            x =  Nd4j.create(oneHotArray, new int[]{vocabSize, 1});
+            // Next character in the sequence
+            x = oneHotEncoding(idx);
+            // Store the chosen character
             ixes[t] = idx;
         }
 
