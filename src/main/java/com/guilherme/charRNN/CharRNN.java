@@ -34,18 +34,11 @@ public class CharRNN {
 
 
     // RNN weights
-    INDArray Wxh;
-    INDArray Whh;
-    INDArray Why;
-    INDArray bh;
-    INDArray by;
-
-    // Adagrad memory
-    INDArray mWxh;
-    INDArray mWhh;
-    INDArray mWhy;
-    INDArray mbh;
-    INDArray mby;
+    private INDArray Wxh;
+    private INDArray Whh;
+    private INDArray Why;
+    private INDArray bh;
+    private INDArray by;
 
 
     private String readFile(String fileLocation) throws IOException {
@@ -73,7 +66,7 @@ public class CharRNN {
 
         this.hiddenSize = 100;
         this.seqLength = 25;
-        this.learningRate = -0.01;
+        this.learningRate = 0.01;
 
         System.out.println("Size of data: " + dataSize);
         System.out.println("Size of vocabulary: " + vocabSize);
@@ -88,9 +81,9 @@ public class CharRNN {
         }
 
         // Model parameters
-        this.Wxh = Nd4j.rand(hiddenSize, vocabSize).mul(0.01);
-        this.Whh = Nd4j.rand(hiddenSize, hiddenSize).mul(0.01);
-        this.Why = Nd4j.rand(vocabSize, hiddenSize).mul(0.01);
+        this.Wxh = Nd4j.randn(hiddenSize, vocabSize).mul(0.01);
+        this.Whh = Nd4j.randn(hiddenSize, hiddenSize).mul(0.01);
+        this.Why = Nd4j.randn(vocabSize, hiddenSize).mul(0.01);
         this.bh = Nd4j.zeros(hiddenSize, 1);
         this.by = Nd4j.zeros(vocabSize, 1);
 
@@ -98,11 +91,11 @@ public class CharRNN {
         int p = 0;
 
         // Adagrad memory
-        this.mWxh = Nd4j.zeros(hiddenSize, vocabSize);
-        this.mWhh = Nd4j.zeros(hiddenSize, hiddenSize);
-        this.mWhy = Nd4j.zeros(vocabSize, hiddenSize);
-        this.mbh = Nd4j.zeros(hiddenSize, 1);
-        this.mby = Nd4j.zeros(vocabSize, 1);
+        INDArray mWxh = Nd4j.zeros(hiddenSize, vocabSize);
+        INDArray mWhh = Nd4j.zeros(hiddenSize, hiddenSize);
+        INDArray mWhy = Nd4j.zeros(vocabSize, hiddenSize);
+        INDArray mbh = Nd4j.zeros(hiddenSize, 1);
+        INDArray mby = Nd4j.zeros(vocabSize, 1);
 
         // Loss at iteration 0
         double smoothLoss = - Math.log(1.0/vocabSize) * seqLength;
@@ -132,51 +125,60 @@ public class CharRNN {
                 int[] sampleIx = sample(hprev, inputs[0], 200);
                 char[] generatedText = new char[sampleIx.length];
 
-//                int i = 0;
-//                for(int ix: sampleIx) {
-//                    generatedText[i] = IxToChar.get(ix);
-//                    i++;
-//                }
+                int i = 0;
+                for(int ix: sampleIx) {
+                    generatedText[i] = IxToChar.get(ix);
+                    i++;
+                }
 
-                // System.out.println("Generated text: ");
-                // System.out.println(new String(generatedText));
+                System.out.println("Generated text: ");
+                System.out.println(new String(generatedText));
             }
 
             // forward seq_length characters through the net and fetch gradient
-            Container propagation = lossFun(inputs, targets, hprev);
+            Container res = lossFun(inputs, targets, hprev);
 
             // Update hidden state
-            hprev = propagation.hs;
+            hprev = res.hs;
 
             // Update loss after forward and backprop
-            smoothLoss = smoothLoss * 0.999 + propagation.loss * 0.001;
+            smoothLoss = smoothLoss * 0.999 + res.loss * 0.001;
 
             if (n % 100 == 0) {
                 System.out.println("Iteration: " + n + " Loss: " + smoothLoss);
             }
 
             // parameter update with Adagrad
-            mWxh = mWxh.add(propagation.dWxh.muli(propagation.dWxh));
-            mWhh = mWhh.add(propagation.dWhh.muli(propagation.dWhh));
-            mWhy = mWhy.add(propagation.dWhy.muli(propagation.dWhy));
-            mbh = mbh.add(propagation.dbh.muli(propagation.dbh));
-            mby = mby.add(propagation.dby.muli(propagation.dby));
+            mWxh.addi(res.dWxh.mul(res.dWxh));
+            mWhh.addi(res.dWhh.mul(res.dWhh));
+            mWhy.addi(res.dWhy.mul(res.dWhy));
+            mbh.addi(res.dbh.mul(res.dbh));
+            mby.addi(res.dby.mul(res.dby));
 
-            // Adagrad update
-            INDArray tmp = propagation.dWxh.mul(learningRate).div(Transforms.sqrt(mWxh.add(0.00000001)));
-            Wxh = Wxh.add(tmp);
 
-            tmp = propagation.dWhh.mul(learningRate).div(Transforms.sqrt(mWhh.add(0.00000001)));
-            Whh = Whh.add(tmp);
+            // Adagrad update - add 1e-8 to the squared gradients to avoid divsion by zero
+            // Theta = Theta - learningRate*gradients/sqrt(squared_gradients + 1e-8)
 
-            tmp = propagation.dWhy.mul(learningRate).div(Transforms.sqrt(mWhy.add(0.00000001)));
-            Why = Why.add(tmp);
+            INDArray tmp = (res.dWxh.mul(learningRate))
+                    .div(Transforms.sqrt(mWxh.add(0.001)));
 
-            tmp = propagation.dbh.mul(learningRate).div(Transforms.sqrt(mbh.add(0.00000001)));
-            bh = bh.add(tmp);
+            Wxh.subi(tmp);
 
-            tmp = propagation.dby.mul(learningRate).div(Transforms.sqrt(mby.add(0.00000001)));
-            by = by.add(tmp);
+            tmp = (res.dWhh.mul(learningRate))
+                    .div(Transforms.sqrt(mWhh.add(0.01)));
+            Whh.subi(tmp);
+
+            tmp = (res.dWhy.mul(learningRate))
+                    .div(Transforms.sqrt(mWhy.add(0.01)));
+            Why.subi(tmp);
+
+            tmp = (res.dbh.mul(learningRate))
+                    .div(Transforms.sqrt(mbh.add(0.01)));
+            bh.subi(tmp);
+
+            tmp = (res.dby.mul(learningRate))
+                    .div(Transforms.sqrt(mby.add(0.01)));
+            by.subi(tmp);
 
             // move data pointer
             p += seqLength;
@@ -185,6 +187,7 @@ public class CharRNN {
         }
 
     }
+
 
 
     private Container lossFun(int[] inputs, int[] targets, INDArray hprev) {
@@ -216,8 +219,8 @@ public class CharRNN {
             // Hidden layer to hidden
             INDArray dot2 = Whh.mmul(hs.get(t - 1)).add(bh);
             INDArray tmp = dot1.add(dot2);
-            // Hidden state step, squash using ReLu
-            hs.put(t, Transforms.relu(tmp));
+            // Hidden state step, squash using tanh to -1 to 1
+            hs.put(t, Transforms.tanh(tmp));
 
             // Output - Y
             // Dot product between weights from h to y and hidden state, plus bias
@@ -250,16 +253,15 @@ public class CharRNN {
             int idx = targets[t];
             double newValue = dy.getDouble(idx) - 1;
             dy.putScalar(new int[]{idx, 0}, newValue);
-
             // Y to H
-            INDArray dot1 = hs.get(t).transpose().mmul(dy);
+            INDArray dot1 = dy.mmul(hs.get(t).transpose());
             dWhy.addi(dot1);
             dby.addi(dy);
 
             //Backprop into h
             dot1 = Why.transpose().mmul(dy);
             INDArray dh = dot1.add(dhnext);
-            INDArray squaredH = hs.get(t).muli(hs.get(t));
+            INDArray squaredH = Transforms.pow(hs.get(t),2);
             // 1 - SquareH
             NdIndexIterator iter = new NdIndexIterator(squaredH.shape());
             while (iter.hasNext()) {
@@ -269,13 +271,13 @@ public class CharRNN {
                 squaredH.putScalar(nextIndex, newVal);
             }
 
-            INDArray dhraw = squaredH.muli(dh);
+            INDArray dhraw = squaredH.mul(dh);
 
-            dbh.add(dhraw);
+            dbh.addi(dhraw);
 
             // Update gradients
-            dWxh.addi(xs.get(t).transpose().mmul(dhraw));
-            dWhh.addi(hs.get(t-1).transpose().mmul(dhraw));
+            dWxh.addi(dhraw.mmul(xs.get(t).transpose()));
+            dWhh.addi(dhraw.mmul(hs.get(t-1).transpose()));
 
             dhnext = Whh.transpose().mmul(dhraw);
         }
@@ -334,8 +336,8 @@ public class CharRNN {
             // Hidden layer to hidden
             INDArray dot2 = Whh.mmul(h).add(bh);
             INDArray tmp = dot1.add(dot2);
-            // Hidden state step, squash with rectified linear unit (can use tanh as well)
-            h = Transforms.relu(tmp);
+            // Hidden state step, squash with tanh to -1 to 1
+            h = Transforms.tanh(tmp);
 
             // Output - Y
             // Dot product between weights from h to y and hidden state, plus bias
